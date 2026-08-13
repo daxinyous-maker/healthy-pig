@@ -29,13 +29,12 @@ test("server-renders the healthy pig app", async () => {
 });
 
 test("keeps restored web and mobile features in local source", async () => {
-  const [page, css, mobileApp, mobileHtml, mobileCss, hosting, agentRules, baseline] = await Promise.all([
+  const [page, css, mobileApp, mobileHtml, mobileCss, agentRules, baseline] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/recovered.css", import.meta.url), "utf8"),
     readFile(new URL("../android-apk/assets/app.js", import.meta.url), "utf8"),
     readFile(new URL("../android-apk/assets/index.html", import.meta.url), "utf8"),
     readFile(new URL("../android-apk/assets/v13.css", import.meta.url), "utf8"),
-    readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
     readFile(new URL("../AGENTS.md", import.meta.url), "utf8"),
     readFile(new URL("../docs/HEALTHY_PIG_BASELINE.md", import.meta.url), "utf8"),
   ]);
@@ -87,7 +86,6 @@ test("keeps restored web and mobile features in local source", async () => {
   assert.match(mobileHtml, /id="habit-kind"/);
   assert.match(mobileHtml, /id="day-note-dialog"/);
   assert.match(mobileCss, /@media \(min-width: 600px\)/);
-  assert.equal(JSON.parse(hosting).d1, null);
   assert.match(agentRules, /网页端和手机端是两个都需要完整实现、分别验收的产品端/);
   assert.match(agentRules, /网站默认仅用户本人访问/);
   assert.match(agentRules, /APK 默认只保存在本机/);

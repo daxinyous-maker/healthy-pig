@@ -21,6 +21,17 @@
 # misc
 .DS_Store
 *.pem
+*.key
+*.p12
+*.jks
+*.keystore
+keystore.properties
+local.properties
+*.apk
+*.aab
+*.sqlite
+*.sqlite3
+*.db
 
 # debug
 npm-debug.log*
@@ -32,7 +43,7 @@ yarn-error.log*
 .env*
 
 # vercel
-.vercel
+.vercel/
 
 # typescript
 next-env.d.ts
