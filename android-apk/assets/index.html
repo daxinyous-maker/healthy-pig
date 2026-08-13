@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+  <meta name="theme-color" content="#eef8e9">
+  <title>健康小猪</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="v13.css">
+</head>
+<body>
+  <header class="app-header">
+    <button class="brand" data-nav="today" aria-label="回到今天"><span>🐷</span>健康小猪</button>
+    <div class="header-actions">
+      <button class="smart-button" id="open-smart" aria-label="一段话智能记录">✨</button>
+      <button class="bell-button" id="open-notifications" aria-label="查看提醒">🔔<i id="notification-dot"></i></button>
+      <button class="add-button" id="open-record" aria-label="记一笔">＋</button>
+    </div>
+  </header>
+  <main id="screen"></main>
+  <nav class="bottom-nav" aria-label="主导航">
+    <button data-nav="today" class="active"><span>☀️</span>今天</button>
+    <button data-nav="trends"><span>🌈</span>趋势</button>
+    <button data-nav="plans"><span>📝</span>计划</button>
+    <button data-nav="profile"><span>🐣</span>我的</button>
+  </nav>
+
+  <dialog id="record-dialog">
+    <form method="dialog" id="record-form">
+      <div class="dialog-heading"><div><small>快速记录</small><h2>记下这一刻</h2></div><button type="button" id="close-record" aria-label="关闭">×</button></div>
+      <div class="type-tabs" id="type-tabs"></div>
+      <div id="record-fields"></div>
+      <label><span>🕐 记录时间</span><input id="record-time" type="datetime-local" required></label>
+      <label id="record-note-wrap"><span>备注 <small>可选，可直接说</small></span><div class="voice-row"><input id="record-note" placeholder="写下一点感受"><button type="button" class="voice-button" data-voice="record-note">🎙️ 说一说</button></div></label>
+      <button class="save-button" type="submit">保存记录</button>
+    </form>
+  </dialog>
+
+  <dialog id="smart-dialog" class="small-dialog">
+    <form method="dialog" id="smart-form">
+      <div class="dialog-heading"><div><small>一句话智能记录</small><h2>今天都做了什么？</h2></div><button type="button" data-close="smart-dialog" aria-label="关闭">×</button></div>
+      <p class="dialog-tip">可以说：“昨晚睡了 7 小时，午饭吃了一碗牛肉面，散步 30 分钟，喝水 500 毫升。”</p>
+      <label><span>语音说或直接输入</span><div class="smart-input"><textarea id="smart-text" rows="5" placeholder="把今天的情况一次说完吧"></textarea><button type="button" class="voice-button" data-voice="smart-text">🎙️ 说一说</button></div></label>
+      <button type="button" class="secondary-button" id="analyze-text">帮我识别</button>
+      <div id="smart-preview"></div>
+      <button class="save-button" id="confirm-smart" type="button" disabled>确认添加</button>
+    </form>
+  </dialog>
+
+  <dialog id="plan-dialog" class="small-dialog">
+    <form method="dialog" id="plan-form">
+      <div class="dialog-heading"><div><small>健康计划</small><h2 id="plan-dialog-title">新增计划</h2></div><button type="button" data-close="plan-dialog" aria-label="关闭">×</button></div>
+      <label><span>图标</span><input id="plan-icon" maxlength="4" value="🌱"></label>
+      <label><span>计划名称</span><input id="plan-title" maxlength="30" placeholder="例如：晚上散步 20 分钟" required></label>
+      <label><span>小提示 <small>可选</small></span><input id="plan-detail" maxlength="60" placeholder="给自己一句温柔的提醒"></label>
+      <label><span>重复方式</span><select id="plan-repeat"><option value="daily">每天</option><option value="weekdays">工作日</option><option value="weekends">周末</option><option value="once">仅一次</option></select></label>
+      <p class="dialog-tip">完成情况按日期保存，第二天会自动显示为未完成。</p>
+      <div class="dialog-actions"><button type="button" class="danger-button" id="delete-plan">删除</button><button class="save-button" type="submit">保存计划</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="entry-dialog" class="small-dialog">
+    <form method="dialog" id="entry-form">
+      <div class="dialog-heading"><div><small>本机记录</small><h2>修改历史记录</h2></div><button type="button" data-close="entry-dialog" aria-label="关闭">×</button></div>
+      <label><span>记录项目</span><select id="entry-type"></select></label>
+      <div id="entry-value-fields"></div>
+      <label><span>记录时间</span><input id="entry-time" type="datetime-local" required></label>
+      <label><span>备注</span><input id="entry-note"></label>
+      <button class="save-button" type="submit">保存修改</button>
+    </form>
+  </dialog>
+
+  <dialog id="avatar-dialog" class="small-dialog">
+    <div class="dialog-heading"><div><small>更换头像</small><h2>选一个喜欢的样子</h2></div><button type="button" data-close="avatar-dialog" aria-label="关闭">×</button></div>
+    <div class="avatar-picker dialog-avatar-picker" id="dialog-avatar-picker"></div>
+    <div class="avatar-actions"><button type="button" id="take-photo">📷 拍一张</button><button type="button" id="choose-photo">🖼️ 从相册选择</button></div>
+    <p class="dialog-tip">照片只保存在这台手机的应用里。</p>
+  </dialog>
+
+  <dialog id="habit-dialog" class="small-dialog">
+    <form method="dialog" id="habit-form">
+      <div class="dialog-heading"><div><small>自定义记录</small><h2>建立生活习惯</h2></div><button type="button" data-close="habit-dialog" aria-label="关闭">×</button></div>
+      <label><span>图标</span><input id="habit-icon" maxlength="4" value="🌿"></label>
+      <label><span>习惯名称</span><input id="habit-name" maxlength="16" placeholder="例如：冥想" required></label>
+      <label><span>记录类型</span><select id="habit-kind"><option value="boolean">完成 / 未完成</option><option value="count" selected>次数</option><option value="duration">时长</option><option value="rating">评分</option><option value="text">文字</option><option value="number">普通数值</option></select></label>
+      <p class="dialog-tip">例如：吃药用完成状态，咖啡用次数，冥想用时长，心情用评分，身体感受用文字。</p>
+      <label id="habit-unit-wrap"><span>计量单位</span><input id="habit-unit" maxlength="8" value="次" placeholder="例如：分钟、次、杯" required></label>
+      <label id="habit-rating-wrap" hidden><span>最高评分</span><input id="habit-rating-max" type="number" min="3" max="10" value="5"></label>
+      <label id="habit-direction-wrap"><span>目标方向</span><select id="habit-direction"><option value="neutral">只观察变化</option><option value="more">越多越接近目标</option><option value="less">越少越好</option></select></label>
+      <label id="habit-goal-wrap" hidden><span>每日参考目标</span><div class="value-row"><input id="habit-goal" type="number" min="0" step="0.1" value="0"><em id="habit-goal-unit">次</em></div></label>
+      <button class="save-button" type="submit">添加到今天</button>
+    </form>
+  </dialog>
+
+  <dialog id="goal-dialog" class="small-dialog">
+    <form method="dialog" id="goal-form">
+      <div class="dialog-heading"><div><small>健康目标</small><h2 id="goal-dialog-title">修改目标</h2></div><button type="button" data-close="goal-dialog" aria-label="关闭">×</button></div>
+      <label><span>每天的目标</span><div class="value-row"><input id="goal-value" type="number" min="0.1" step="0.1" required><em id="goal-unit">小时</em></div></label>
+      <p class="dialog-tip">修改后会直接保存在当前设备，不会跳转到计划页面。</p>
+      <button class="save-button" type="submit">保存目标</button>
+    </form>
+  </dialog>
+
+  <dialog id="notification-dialog" class="small-dialog">
+    <div class="dialog-heading"><div><small>温柔提醒</small><h2>今天的小消息</h2></div><button type="button" data-close="notification-dialog" aria-label="关闭">×</button></div>
+    <div id="notification-list"></div>
+  </dialog>
+  <dialog id="day-note-dialog" class="small-dialog">
+    <form method="dialog" id="day-note-form">
+      <div class="dialog-heading"><div><small>解释当天变化</small><h2 id="day-note-title">日期备注</h2></div><button type="button" data-close="day-note-dialog" aria-label="关闭">×</button></div>
+      <label><span>当天发生了什么</span><textarea id="day-note-text" rows="4" placeholder="例如：感冒、加班、旅行、睡得比较晚"></textarea></label>
+      <p class="dialog-tip">备注只帮助理解趋势，不参与健康评分。</p>
+      <div class="dialog-actions"><button type="button" class="danger-button" id="clear-day-note">清除备注</button><button class="save-button" type="submit">保存备注</button></div>
+    </form>
+  </dialog>
+  <div id="toast" role="status"></div>
+  <input id="backup-file" type="file" accept="application/json,.json" hidden>
+  <script src="parser.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

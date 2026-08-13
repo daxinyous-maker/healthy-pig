@@ -31,18 +31,19 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
-# local hosting identity and personal exports
-/.openai/hosting.json
-*健康小猪备份*.json
-*healthy-pig-backup*.json
-*.health-backup.json
-
 # vercel
 .vercel
 
 # typescript
 next-env.d.ts
+*.tsbuildinfo
 /dist/
 /.wrangler/
 /outputs/
 /work/
+
+# local hosting identity and personal exports
+/.openai/hosting.json
+*健康小猪备份*.json
+*healthy-pig-backup*.json
+*.health-backup.json
