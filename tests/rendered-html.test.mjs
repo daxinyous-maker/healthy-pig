@@ -122,3 +122,28 @@ test("natural language parser supports flexible custom habits", async () => {
   assert.equal(results.find((entry) => entry.type === "coffee").value, 2);
   assert.match(results.find((entry) => entry.type === "feeling").note, /喉咙有点干/);
 });
+
+test("Android backup text cannot become executable HTML", async () => {
+  await import(new URL(`../android-apk/assets/security.js?test=${Date.now()}`, import.meta.url));
+  const { escapeHtml, safeAvatar, safeIdentifier, safeText } = globalThis.HealthyPigSecurity;
+  const payloads = [
+    "<script>alert(1)</script>",
+    "<img src=x onerror=alert(1)>",
+    '"><img src=x onerror=alert(1)>',
+  ];
+
+  for (const payload of payloads) {
+    const restoredText = safeText(payload, "", 1000);
+    const rendered = `<span>${escapeHtml(restoredText)}</span>`;
+    assert.doesNotMatch(rendered, /<(?:script|img)\b/i);
+    assert.match(rendered, /&lt;/);
+    assert.equal(safeIdentifier(payload), "");
+  }
+
+  assert.equal(safeIdentifier("custom-water_2"), "custom-water_2");
+  assert.equal(safeIdentifier("__proto__"), "");
+  assert.equal(safeAvatar("javascript:alert(1)"), "😊");
+  assert.equal(safeAvatar("https://example.com/avatar.png"), "😊");
+  assert.equal(safeAvatar("data:image/svg+xml;base64,PHN2Zz4="), "😊");
+  assert.equal(safeAvatar("data:image/png;base64,iVBORw0KGgo="), "data:image/png;base64,iVBORw0KGgo=");
+});
