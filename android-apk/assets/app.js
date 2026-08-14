@@ -7,7 +7,7 @@ const TYPES = {
   smoking: { label: "吸烟", icon: "🚭", unit: "根", value: 0, kind: "count", direction: "less", goal: 0 },
   alcohol: { label: "饮酒", icon: "🍷", unit: "杯", value: 0, kind: "count", direction: "less", goal: 0 },
 };
-const AVATARS = ["😊", "🐰", "🐣", "🐻", "🌸", "🌱"];
+const { DEFAULT_AVATARS: AVATARS, escapeHtml: esc, isRecord, safeAvatar, safeIdentifier, safeText } = window.HealthyPigSecurity;
 const DEFAULT_PLANS = [
   { id: "sleep-plan", icon: "🌙", title: "23:00 前放下手机", detail: "给大脑一点放松时间", repeat: "daily", completedDates: [], createdDate: "" },
   { id: "food-plan", icon: "🥗", title: "吃满 3 份蔬果", detail: "给身体补充缤纷营养", repeat: "daily", completedDates: [], createdDate: "" },
@@ -48,28 +48,89 @@ const fields = document.querySelector("#record-fields");
 
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function localDayKey(date = new Date()) { const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000); return local.toISOString().slice(0, 10); }
+function safeDayKey(value, fallback = "") { return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback; }
+function safeDateTime(value, fallback = "") { return typeof value === "string" && value.length <= 40 && Number.isFinite(new Date(value).getTime()) ? value : fallback; }
+function safeNumber(value, fallback, minimum = -1_000_000_000, maximum = 1_000_000_000) { const number = Number(value); return Number.isFinite(number) ? Math.min(maximum, Math.max(minimum, number)) : fallback; }
 function normalizePlan(plan, index) {
+  const source = isRecord(plan) ? plan : {};
   return {
-    id: String(plan.id || `plan-${index}-${Date.now()}`), icon: plan.icon || "🌱", title: plan.title || "健康计划", detail: plan.detail || "",
-    repeat: ["daily", "weekdays", "weekends", "once"].includes(plan.repeat) ? plan.repeat : "daily",
-    completedDates: Array.isArray(plan.completedDates) ? plan.completedDates.filter((date) => typeof date === "string") : plan.done ? [localDayKey()] : [],
-    createdDate: plan.createdDate || localDayKey(),
+    id: safeIdentifier(source.id, `plan-${index}`),
+    icon: safeText(source.icon, "🌱", 16) || "🌱",
+    title: safeText(source.title, "健康计划", 80) || "健康计划",
+    detail: safeText(source.detail, "", 240),
+    repeat: ["daily", "weekdays", "weekends", "once"].includes(source.repeat) ? source.repeat : "daily",
+    completedDates: Array.isArray(source.completedDates) ? source.completedDates.slice(0, 5000).map((date) => safeDayKey(date)).filter(Boolean) : source.done ? [localDayKey()] : [],
+    createdDate: safeDayKey(source.createdDate, localDayKey()),
   };
 }
 function normalizeState(saved) {
-  const oldPlans = Array.isArray(saved?.plans) ? saved.plans : [];
+  const source = isRecord(saved) ? saved : {};
+  const oldPlans = Array.isArray(source.plans) ? source.plans.slice(0, 1000) : [];
   const sourcePlans = oldPlans.length && typeof oldPlans[0] === "boolean"
     ? DEFAULT_PLANS.map((plan, index) => ({ ...plan, done: Boolean(oldPlans[index]) }))
     : oldPlans.length ? oldPlans : DEFAULT_PLANS;
-  const webHabits = Array.isArray(saved?.habits) ? saved.habits : null;
-  const normalizeHabit = (habit) => ({ ...habit, kind: habit.kind || (["smoking", "alcohol"].includes(habit.id) ? "count" : "number"), direction: habit.direction || (["smoking", "alcohol"].includes(habit.id) ? "less" : "neutral"), goal: Number.isFinite(Number(habit.goal)) ? Number(habit.goal) : undefined, ratingMax: habit.ratingMax || 5 });
+  const webHabits = Array.isArray(source.habits) ? source.habits.slice(0, 200) : null;
+  const rawCustomHabits = Array.isArray(source.customHabits)
+    ? source.customHabits.slice(0, 200)
+    : webHabits
+      ? webHabits.filter((habit) => isRecord(habit) && !habit.builtIn && !["smoking", "alcohol"].includes(habit.id))
+      : [];
+  const customHabits = rawCustomHabits.map((habit) => {
+    if (!isRecord(habit)) return null;
+    const id = safeIdentifier(habit.id);
+    if (!id || TYPES[id]) return null;
+    const kind = ["number", "boolean", "count", "duration", "rating", "text"].includes(habit.kind) ? habit.kind : "number";
+    const direction = ["more", "less", "neutral"].includes(habit.direction) ? habit.direction : "neutral";
+    return {
+      id,
+      name: safeText(habit.name, "自定义习惯", 40) || "自定义习惯",
+      icon: safeText(habit.icon, "🌿", 16) || "🌿",
+      unit: safeText(habit.unit, kind === "text" ? "" : "次", 24),
+      kind,
+      direction: kind === "text" ? "neutral" : direction,
+      goal: direction === "neutral" || kind === "text" ? undefined : safeNumber(habit.goal, 0),
+      ratingMax: kind === "rating" ? safeNumber(habit.ratingMax, 5, 3, 10) : undefined,
+    };
+  }).filter(Boolean).filter((habit, index, habits) => habits.findIndex((item) => item.id === habit.id) === index);
+  const customIds = new Set(customHabits.map((habit) => habit.id));
+  const allowedTypes = new Set([...Object.keys(TYPES), ...customIds]);
+  const entries = (Array.isArray(source.entries) ? source.entries : []).slice(0, 100000).map((entry, index) => {
+    if (!isRecord(entry)) return null;
+    const type = safeIdentifier(entry.type);
+    const recordedAt = safeDateTime(entry.recordedAt);
+    if (!type || !recordedAt) return null;
+    return {
+      id: Number.isFinite(Number(entry.id)) ? Math.trunc(Number(entry.id)) : Date.now() + index,
+      type,
+      value: safeNumber(entry.value, 0),
+      unit: safeText(entry.unit, "", 24),
+      note: safeText(entry.note, "", 1000),
+      recordedAt,
+    };
+  }).filter(Boolean);
+  const savedProfile = isRecord(source.profile) ? source.profile : {};
+  const savedGoals = isRecord(source.goals) ? source.goals : {};
+  const visibleSource = Array.isArray(source.visible) ? source.visible : webHabits ? webHabits.filter((habit) => isRecord(habit) && habit.visible).map((habit) => habit.id) : [];
+  const removedSource = Array.isArray(source.removedBuiltins) ? source.removedBuiltins : webHabits ? ["smoking", "alcohol"].filter((id) => !webHabits.some((habit) => isRecord(habit) && habit.id === id)) : [];
+  const visible = visibleSource.slice(0, 500).map((id) => safeIdentifier(id)).filter((id) => allowedTypes.has(id));
+  const removedBuiltins = removedSource.filter((id) => ["smoking", "alcohol"].includes(id));
+  const dayNotes = {};
+  if (isRecord(source.dayNotes)) Object.entries(source.dayNotes).slice(0, 5000).forEach(([date, note]) => { const key = safeDayKey(date); if (key && typeof note === "string") dayNotes[key] = safeText(note, "", 500); });
   const next = {
-    ...clone(DEFAULT_STATE), ...(saved || {}), version: 5,
-    profile: { ...DEFAULT_STATE.profile, ...(saved?.profile || {}) }, goals: { ...DEFAULT_STATE.goals, ...(saved?.goals || {}) },
-    plans: sourcePlans.map(normalizePlan), customHabits: (Array.isArray(saved?.customHabits) ? saved.customHabits : webHabits ? webHabits.filter((habit) => !habit.builtIn && !["smoking", "alcohol"].includes(habit.id)).map(({ id, name, icon, unit, kind, direction, goal, ratingMax }) => ({ id, name, icon, unit, kind, direction, goal, ratingMax })) : []).map(normalizeHabit), entries: Array.isArray(saved?.entries) ? saved.entries : [],
-    visible: Array.isArray(saved?.visible) ? saved.visible : webHabits ? webHabits.filter((habit) => habit.visible).map((habit) => habit.id) : [], removedBuiltins: Array.isArray(saved?.removedBuiltins) ? saved.removedBuiltins : webHabits ? ["smoking", "alcohol"].filter((id) => !webHabits.some((habit) => habit.id === id)) : [],
-    lastBackupAt: typeof saved?.lastBackupAt === "string" ? saved.lastBackupAt : "",
-    typeOrder: Array.isArray(saved?.typeOrder) ? saved.typeOrder : clone(DEFAULT_STATE.typeOrder), dayNotes: saved?.dayNotes && typeof saved.dayNotes === "object" ? saved.dayNotes : {},
+    ...clone(DEFAULT_STATE),
+    version: 5,
+    profile: { nickname: safeText(savedProfile.nickname, DEFAULT_STATE.profile.nickname, 40) || DEFAULT_STATE.profile.nickname, avatar: safeAvatar(savedProfile.avatar, DEFAULT_STATE.profile.avatar) },
+    goals: { sleep: safeNumber(savedGoals.sleep, DEFAULT_STATE.goals.sleep, 0.1), exercise: safeNumber(savedGoals.exercise, DEFAULT_STATE.goals.exercise, 0.1), water: safeNumber(savedGoals.water, DEFAULT_STATE.goals.water, 0.1) },
+    plans: sourcePlans.map(normalizePlan),
+    customHabits,
+    entries,
+    visible: [...new Set(visible)],
+    removedBuiltins: [...new Set(removedBuiltins)],
+    notificationDate: safeDayKey(source.notificationDate),
+    notificationsSeen: source.notificationsSeen === true,
+    lastBackupAt: safeDateTime(source.lastBackupAt),
+    typeOrder: (Array.isArray(source.typeOrder) ? source.typeOrder : clone(DEFAULT_STATE.typeOrder)).slice(0, 500).map((id) => safeIdentifier(id)).filter((id) => allowedTypes.has(id)),
+    dayNotes,
   };
   const allTypes = ["sleep", "meal", "exercise", "water", ...next.visible, ...next.customHabits.map((habit) => habit.id)];
   next.typeOrder = [...new Set([...next.typeOrder, ...allTypes])];
@@ -89,7 +150,6 @@ function planAppliesToday(plan) { const day = new Date().getDay(); if (plan.repe
 function planDoneToday(plan) { return plan.completedDates.includes(localDayKey()); }
 function repeatLabel(value) { return ({ daily: "每天", weekdays: "工作日", weekends: "周末", once: "仅一次" })[value] || "每天"; }
 function latest(type) { return state.entries.find((entry) => entry.type === type && isToday(entry.recordedAt)) || null; }
-function esc(value) { return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char])); }
 function getMeta(type) {
   if (TYPES[type]) return { ...TYPES[type], goal: ["sleep", "exercise", "water"].includes(type) ? state.goals[type] : TYPES[type].goal };
   const habit = state.customHabits.find((item) => item.id === type);
@@ -107,21 +167,21 @@ function showToast(message) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.remove("show"), 2600);
 }
-function pageTitle(kicker, title) { return `<div class="page-title"><small>${kicker}</small><h1>${title}</h1></div>`; }
-function avatarMarkup(value) { return value.startsWith("data:image/") ? `<img src="${value}" alt="个人头像">` : `<span>${value}</span>`; }
+function pageTitle(kicker, title) { return `<div class="page-title"><small>${esc(kicker)}</small><h1>${esc(title)}</h1></div>`; }
+function avatarMarkup(value) { const avatar = safeAvatar(value); return avatar.startsWith("data:image/") ? `<img src="${esc(avatar)}" alt="个人头像">` : `<span>${esc(avatar)}</span>`; }
 
 function metricCard(type) {
   const meta = getMeta(type);
   const entry = latest(type);
   const display = displayEntry(entry, meta);
   const className = TYPES[type] ? type : "custom";
-  return `<article class="card ${className}"><div class="card-top"><span class="card-icon">${meta.icon}</span></div><span class="kicker">${esc(meta.label)}${type === "meal" ? " · 自动估算" : ""}</span><div class="metric-value ${["text", "boolean"].includes(meta.kind) ? "words" : ""}"><strong>${display.value}</strong><span> ${esc(display.unit)}</span></div><div class="card-meta">${esc(display.detail)}</div></article>`;
+  return `<article class="card ${className}"><div class="card-top"><span class="card-icon">${esc(meta.icon)}</span></div><span class="kicker">${esc(meta.label)}${type === "meal" ? " · 自动估算" : ""}</span><div class="metric-value ${["text", "boolean"].includes(meta.kind) ? "words" : ""}"><strong>${esc(display.value)}</strong><span> ${esc(display.unit)}</span></div><div class="card-meta">${esc(display.detail)}</div></article>`;
 }
 
 function renderToday() {
   const todayEntries = state.entries.filter((entry) => isToday(entry.recordedAt));
   const score = Math.min(96, 70 + todayEntries.length * 4);
-  screen.innerHTML = `${pageTitle(new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "long" }).format(new Date()), `把${esc(state.profile.nickname)}养成健健康康的小猪`)}
+  screen.innerHTML = `${pageTitle(new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "long" }).format(new Date()), `把${state.profile.nickname}养成健健康康的小猪`)}
     <section class="hero"><span class="kicker">今日状态</span><div class="score">${score}<span> / 100</span></div><h2>${todayEntries.length ? "今天也在好好照顾自己 🌟" : "从一条小记录开始吧 🌼"}</h2><p>${todayEntries.length ? `已经记录了 ${todayEntries.length} 件健康小事，慢慢积累就很棒。` : "睡眠、餐食、运动和喝水，都可以轻轻松松记下来。"}</p><div class="badges"><span>🌱 本机私密保存</span><span>🎙️ 支持语音</span></div></section>
     <div class="section-heading"><div><span class="kicker">今日记录</span><h2>今天照顾了这些</h2></div></div>
     <section class="metric-grid">${enabledTypes().map(metricCard).join("")}</section>
@@ -153,7 +213,7 @@ function renderTrends() {
     <div class="summary-grid"><article class="summary-card"><span>📅</span><small>有记录天数</small><strong>${counts.filter(Boolean).length}</strong></article><article class="summary-card"><span>🌼</span><small>${trendDays === 90 ? "近 3 个月记录" : `近 ${trendDays} 天记录`}</small><strong>${counts.reduce((sum, value) => sum + value, 0)}</strong></article></div>
     ${curveMarkup(days, counts, counts.map((count) => count > 0), { label: "记录次数", unit: "次", direction: "neutral" })}
     <div class="section-heading trend-heading"><div><span class="kicker">按项目查看</span><h2>每一种习惯的变化</h2></div><small>点击查看每日明细</small></div>
-    <section class="trend-project-list">${trendTypes.map((type) => { const meta = getMeta(type); const values = days.map((day) => dailyValue(type, day)); const hasEntries = days.map((day) => entriesForDay(type, day).length > 0); return `<button class="trend-project" data-trend-type="${esc(type)}"><span class="trend-project-icon">${meta.icon}</span><span class="trend-project-copy"><strong>${esc(meta.label)}</strong><small>${esc(goalExplanation(meta))} · ${esc(trendMessage(values, meta))}</small></span>${curveMarkup(days, values, hasEntries, meta, true)}</button>`; }).join("")}</section>
+    <section class="trend-project-list">${trendTypes.map((type) => { const meta = getMeta(type); const values = days.map((day) => dailyValue(type, day)); const hasEntries = days.map((day) => entriesForDay(type, day).length > 0); return `<button class="trend-project" data-trend-type="${esc(type)}"><span class="trend-project-icon">${esc(meta.icon)}</span><span class="trend-project-copy"><strong>${esc(meta.label)}</strong><small>${esc(goalExplanation(meta))} · ${esc(trendMessage(values, meta))}</small></span>${curveMarkup(days, values, hasEntries, meta, true)}</button>`; }).join("")}</section>
     <button class="history-shortcut" id="open-history"><span>🕰️</span><div><strong>全部历史记录</strong><small>${state.entries.length} 条 · 可以修改或删除</small></div><i>→</i></button>
     <div class="empty-note">自定义习惯也会自动出现在这里 🐷</div>`;
   screen.querySelectorAll("[data-trend-type]").forEach((button) => button.onclick = () => { trendDetailType = button.dataset.trendType; renderTrendDetail(trendDetailType); });
@@ -164,7 +224,7 @@ function renderTrends() {
 function renderHistory() {
   const entries = [...state.entries].sort((a, b) => new Date(b.recordedAt) - new Date(a.recordedAt));
   screen.innerHTML = `<button class="back-button" id="back-history">‹ 返回趋势</button>${pageTitle("本机记录", "全部历史记录")}
-    <section class="history-list">${entries.length ? entries.map((entry) => { const meta = getMeta(entry.type); const display = displayEntry(entry, meta); return `<article><span>${meta.icon}</span><div><strong>${esc(meta.label)} · ${display.value} ${esc(display.unit)}</strong><time>${new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(entry.recordedAt))}</time><small>${esc(entry.note) || "没有备注"}</small></div><div class="history-actions"><button data-edit-entry="${entry.id}">编辑</button><button data-delete-entry="${entry.id}">删除</button></div></article>`; }).join("") : '<div class="empty-note">还没有历史记录，先去“今天”记一笔吧。</div>'}</section>`;
+    <section class="history-list">${entries.length ? entries.map((entry) => { const meta = getMeta(entry.type); const display = displayEntry(entry, meta); return `<article><span>${esc(meta.icon)}</span><div><strong>${esc(meta.label)} · ${esc(display.value)} ${esc(display.unit)}</strong><time>${new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(entry.recordedAt))}</time><small>${esc(entry.note) || "没有备注"}</small></div><div class="history-actions"><button data-edit-entry="${entry.id}">编辑</button><button data-delete-entry="${entry.id}">删除</button></div></article>`; }).join("") : '<div class="empty-note">还没有历史记录，先去“今天”记一笔吧。</div>'}</section>`;
   document.querySelector("#back-history").onclick = renderTrends;
   screen.querySelectorAll("[data-edit-entry]").forEach((button) => button.onclick = () => openEntryDialog(Number(button.dataset.editEntry)));
   screen.querySelectorAll("[data-delete-entry]").forEach((button) => button.onclick = () => { const id = Number(button.dataset.deleteEntry); if (!confirm("删除这条历史记录吗？")) return; state.entries = state.entries.filter((entry) => entry.id !== id); saveState(); showToast("记录已删除"); renderHistory(); });
@@ -177,7 +237,7 @@ function renderTrendDetail(type) {
   const total = values.reduce((sum, value) => sum + value, 0);
   const rows = days.map((day, index) => ({ day, entries: entriesForDay(type, day), value: values[index] }));
   const streak = streakFor(rows, meta);
-  screen.innerHTML = `<div class="detail-topline"><button class="back-button" id="back-trends">‹ 返回全部趋势</button>${rangeSwitch()}</div>${pageTitle(`近 ${trendDays === 90 ? "3 个月" : `${trendDays} 天`}每日变化`, `${meta.icon} ${esc(meta.label)}`)}
+  screen.innerHTML = `<div class="detail-topline"><button class="back-button" id="back-trends">‹ 返回全部趋势</button>${rangeSwitch()}</div>${pageTitle(`近 ${trendDays === 90 ? "3 个月" : `${trendDays} 天`}每日变化`, `${meta.icon} ${meta.label}`)}
     <section class="detail-chart"><div class="detail-chart-title"><span>${esc(trendMessage(values, meta))}</span><strong>${Number.isInteger(total) ? total : total.toFixed(1)} <small>${esc(meta.kind === "text" ? "条" : meta.unit)}</small></strong></div>${meta.direction !== "neutral" ? `<div class="goal-summary ${meta.direction}"><strong>${meta.direction === "less" ? "↓ 越低越好" : "↑ 越高越接近目标"}</strong><span>${esc(goalExplanation(meta))}</span>${streak ? `<small>轻松连续达标 ${streak} 天 🌱</small>` : ""}</div>` : ""}${curveMarkup(days, values, rows.map((row) => row.entries.length > 0), meta)}</section>
     <section class="daily-list">${rows.slice().reverse().map((row) => { const key = localDayKey(row.day); const display = !row.entries.length ? "没有记录" : meta.kind === "boolean" ? (row.value ? "已完成" : "未完成") : meta.kind === "rating" ? `${row.value.toFixed(1)} / ${meta.ratingMax || 5} 分` : meta.kind === "text" ? `${row.entries.length} 条文字记录` : `${Number(row.value.toFixed(1))} ${esc(meta.unit)}`; return `<article><time>${new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", weekday: "short" }).format(row.day)}</time><div><strong>${display}</strong><small>${row.entries.length ? row.entries.map((entry) => esc(entry.note) || new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(new Date(entry.recordedAt))).join(" · ") : "—"}</small>${state.dayNotes[key] ? `<p>🏷️ ${esc(state.dayNotes[key])}</p>` : ""}</div><button data-day-note="${key}">${state.dayNotes[key] ? "修改备注" : "＋ 日期备注"}</button></article>`; }).join("")}</section>
     `;
@@ -203,9 +263,9 @@ function renderProfile() {
   const habitCount = optionalTypes.length + state.customHabits.length;
   screen.innerHTML = `${pageTitle("个人资料与记录设置", "我的健康小空间")}
     <section class="hero profile-hero"><button class="big-avatar" id="change-avatar" aria-label="更换头像">${avatarMarkup(state.profile.avatar)}<i>✎</i></button><div class="profile-name-wrap"><span class="kicker">点击头像或名字直接修改</span><input id="profile-name" maxlength="20" value="${esc(state.profile.nickname)}" aria-label="昵称"><p>这里是你的个人健康空间</p></div></section>
-    <details class="habit-settings"><summary><span>🧩</span><div><strong>我的习惯</strong><small>${habitCount} 个可选习惯 · 支持多种记录类型</small></div><i>⌄</i></summary><div class="habit-settings-body"><p>可添加完成状态、次数、时长、评分、文字或普通数值；还可以设置越多越好或越少越好。</p><div class="core-habit-list">${["sleep", "meal", "exercise", "water"].map((type) => `<span>${TYPES[type].icon} ${TYPES[type].label}<small>基础项目</small></span>`).join("")}</div><div class="optional-habit-list">${optionalTypes.map((type) => `<div><span class="optional-habit-icon">${TYPES[type].icon}</span><div><strong>${TYPES[type].label}</strong><small>${kindLabel(TYPES[type].kind)} · 越少越好</small></div><button class="habit-visibility ${state.visible.includes(type) ? "active" : ""}" data-toggle="${type}">${state.visible.includes(type) ? "已展示" : "不展示"}</button><button class="habit-delete" data-remove-builtin="${type}" aria-label="删除${TYPES[type].label}">×</button></div>`).join("")}</div><div class="custom-habit-list">${state.customHabits.map((habit) => `<div><span>${habit.icon}</span><strong>${esc(habit.name)}</strong><small>${kindLabel(habit.kind)} · ${directionLabel(habit.direction)}</small><button data-remove-habit="${habit.id}" aria-label="删除${esc(habit.name)}">×</button></div>`).join("")}</div><button class="add-habit" id="add-habit">＋ 添加自己想记录的习惯</button></div></details>
+    <details class="habit-settings"><summary><span>🧩</span><div><strong>我的习惯</strong><small>${habitCount} 个可选习惯 · 支持多种记录类型</small></div><i>⌄</i></summary><div class="habit-settings-body"><p>可添加完成状态、次数、时长、评分、文字或普通数值；还可以设置越多越好或越少越好。</p><div class="core-habit-list">${["sleep", "meal", "exercise", "water"].map((type) => `<span>${TYPES[type].icon} ${TYPES[type].label}<small>基础项目</small></span>`).join("")}</div><div class="optional-habit-list">${optionalTypes.map((type) => `<div><span class="optional-habit-icon">${TYPES[type].icon}</span><div><strong>${TYPES[type].label}</strong><small>${kindLabel(TYPES[type].kind)} · 越少越好</small></div><button class="habit-visibility ${state.visible.includes(type) ? "active" : ""}" data-toggle="${type}">${state.visible.includes(type) ? "已展示" : "不展示"}</button><button class="habit-delete" data-remove-builtin="${type}" aria-label="删除${TYPES[type].label}">×</button></div>`).join("")}</div><div class="custom-habit-list">${state.customHabits.map((habit) => `<div><span>${esc(habit.icon)}</span><strong>${esc(habit.name)}</strong><small>${esc(kindLabel(habit.kind))} · ${esc(directionLabel(habit.direction))}</small><button data-remove-habit="${esc(habit.id)}" aria-label="删除${esc(habit.name)}">×</button></div>`).join("")}</div><button class="add-habit" id="add-habit">＋ 添加自己想记录的习惯</button></div></details>
     <section class="goal-grid">${["sleep", "exercise", "water"].map((type) => `<article><span>${TYPES[type].icon}</span><small>${TYPES[type].label}目标</small><strong>${state.goals[type]} ${TYPES[type].unit}</strong><button data-goal="${type}">修改目标</button></article>`).join("")}</section>
-    <details class="habit-settings utility-settings"><summary><span>⚙️</span><div><strong>设置</strong><small>显示顺序、备份与隐私</small></div><i>⌄</i></summary><div class="habit-settings-body utility-settings-body"><section class="habit-sort-card compact-setting"><div><span>⠿</span><div><strong>显示顺序</strong><small>按住移动按钮上下拖动</small></div></div><div class="habit-sort-list">${enabledTypes().map((type) => { const meta = getMeta(type); return `<div data-sort-type="${esc(type)}"><button class="drag-handle" data-drag-handle="${esc(type)}" aria-label="按住拖动${esc(meta.label)}">⠿</button><span>${meta.icon}</span><strong>${esc(meta.label)}</strong><small>${kindLabel(meta.kind)}</small></div>`; }).join("")}</div></section><section class="backup-card compact-setting"><div><span>🧳</span><div><strong>本地数据备份</strong><small>保存到手机文件，之后可以恢复全部记录</small>${state.lastBackupAt ? `<small>最近备份：${new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(state.lastBackupAt))}</small>` : ""}</div></div><div><button id="export-backup">导出备份</button><button id="import-backup">恢复备份</button></div></section><div class="privacy compact-setting">🔒 仅保存在当前设备，不会上传健康记录；备份也只由你手动保存和恢复。收到新版 APK 时请直接覆盖安装，不要先卸载。</div></div></details>`;
+    <details class="habit-settings utility-settings"><summary><span>⚙️</span><div><strong>设置</strong><small>显示顺序、备份与隐私</small></div><i>⌄</i></summary><div class="habit-settings-body utility-settings-body"><section class="habit-sort-card compact-setting"><div><span>⠿</span><div><strong>显示顺序</strong><small>按住移动按钮上下拖动</small></div></div><div class="habit-sort-list">${enabledTypes().map((type) => { const meta = getMeta(type); return `<div data-sort-type="${esc(type)}"><button class="drag-handle" data-drag-handle="${esc(type)}" aria-label="按住拖动${esc(meta.label)}">⠿</button><span>${esc(meta.icon)}</span><strong>${esc(meta.label)}</strong><small>${esc(kindLabel(meta.kind))}</small></div>`; }).join("")}</div></section><section class="backup-card compact-setting"><div><span>🧳</span><div><strong>本地数据备份</strong><small>保存到手机文件，之后可以恢复全部记录</small>${state.lastBackupAt ? `<small>最近备份：${new Intl.DateTimeFormat("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(state.lastBackupAt))}</small>` : ""}</div></div><div><button id="export-backup">导出备份</button><button id="import-backup">恢复备份</button></div></section><div class="privacy compact-setting">🔒 仅保存在当前设备，不会上传健康记录；备份也只由你手动保存和恢复。收到新版 APK 时请直接覆盖安装，不要先卸载。</div></div></details>`;
   document.querySelector("#change-avatar").onclick = openAvatarDialog;
   document.querySelector("#profile-name").addEventListener("change", (event) => { state.profile.nickname = event.target.value.trim() || "宝宝"; event.target.value = state.profile.nickname; saveState(); showToast("昵称保存好啦 🌸"); });
   screen.querySelectorAll("[data-toggle]").forEach((button) => button.onclick = () => { const type = button.dataset.toggle; state.visible = state.visible.includes(type) ? state.visible.filter((item) => item !== type) : [...state.visible, type]; saveState(); renderProfile(); });
@@ -246,7 +306,7 @@ function openRecord(type = "exercise") {
   recordDialog.showModal();
 }
 function renderRecordForm() {
-  tabs.innerHTML = enabledTypes().map((type) => `<button type="button" data-type="${type}" class="${type === recordType ? "active" : ""}">${esc(getMeta(type).label)}</button>`).join("");
+  tabs.innerHTML = enabledTypes().map((type) => `<button type="button" data-type="${esc(type)}" class="${type === recordType ? "active" : ""}">${esc(getMeta(type).label)}</button>`).join("");
   tabs.querySelectorAll("button").forEach((button) => button.onclick = () => { recordType = button.dataset.type; renderRecordForm(); });
   const meta = getMeta(recordType);
   if (recordType === "meal") {
@@ -325,8 +385,9 @@ function importBackup() {
 }
 function restoreBackupText(text) {
   try {
+    if (typeof text !== "string" || text.length > 10_000_000) throw new Error("invalid");
     const parsed = JSON.parse(text);
-    if (parsed?.format !== "healthy-pig-backup" || !parsed.data) throw new Error("invalid");
+    if (!isRecord(parsed) || parsed.format !== "healthy-pig-backup" || !isRecord(parsed.data)) throw new Error("invalid");
     if (!confirm("恢复备份会用备份内容替换当前手机的数据，确定继续吗？")) return;
     state = normalizeState(parsed.data); state.lastBackupAt = new Date().toISOString(); saveState(); view = "today"; render(); showToast("备份已恢复，记录都回来啦 🌼");
   } catch { showToast("没有识别到有效的健康小猪备份文件"); }
@@ -358,7 +419,9 @@ function openAvatarDialog() {
   document.querySelector("#avatar-dialog").showModal();
 }
 window.__shengxiAvatarSelected = (dataUrl) => {
-  state.profile.avatar = dataUrl;
+  const avatar = safeAvatar(dataUrl, "");
+  if (!avatar) return showToast("没有识别到安全的照片头像");
+  state.profile.avatar = avatar;
   saveState();
   document.querySelector("#avatar-dialog").close();
   if (view === "profile") renderProfile();
@@ -387,7 +450,7 @@ function analyzeSmartText() {
 
 function smartEditMarkup(entry, index) {
   const types = [...new Set([...enabledTypes(), entry.type])];
-  return `<article><div class="smart-edit-heading"><span>${getMeta(entry.type).icon}</span><strong>检查这条记录</strong><button data-smart-delete="${index}">删除</button></div><label><span>项目</span><select data-smart-type="${index}">${types.map((type) => `<option value="${esc(type)}" ${type === entry.type ? "selected" : ""}>${esc(getMeta(type).label)}</option>`).join("")}</select></label><label><span>数值</span><div class="value-row"><input data-smart-value="${index}" type="number" min="0" step="0.1" value="${entry.value}"><em>${esc(entry.unit)}</em></div></label><label><span>记录时间</span><input data-smart-time="${index}" type="datetime-local" value="${nowLocalFrom(entry.recordedAt)}"></label><label><span>备注</span><input data-smart-note="${index}" value="${esc(entry.note)}"></label></article>`;
+  return `<article><div class="smart-edit-heading"><span>${esc(getMeta(entry.type).icon)}</span><strong>检查这条记录</strong><button data-smart-delete="${index}">删除</button></div><label><span>项目</span><select data-smart-type="${index}">${types.map((type) => `<option value="${esc(type)}" ${type === entry.type ? "selected" : ""}>${esc(getMeta(type).label)}</option>`).join("")}</select></label><label><span>数值</span><div class="value-row"><input data-smart-value="${index}" type="number" min="0" step="0.1" value="${Number(entry.value) || 0}"><em>${esc(entry.unit)}</em></div></label><label><span>记录时间</span><input data-smart-time="${index}" type="datetime-local" value="${esc(nowLocalFrom(entry.recordedAt))}"></label><label><span>备注</span><input data-smart-note="${index}" value="${esc(entry.note)}"></label></article>`;
 }
 function bindSmartEditors() {
   const preview = document.querySelector("#smart-preview");

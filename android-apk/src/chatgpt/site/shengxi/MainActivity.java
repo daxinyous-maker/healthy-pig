@@ -13,6 +13,10 @@ import android.speech.RecognizerIntent;
 import android.speech.RecognitionListener;
 import android.speech.SpeechRecognizer;
 import android.webkit.JavascriptInterface;
+import android.webkit.WebBackForwardList;
+import android.webkit.WebHistoryItem;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -21,6 +25,7 @@ import android.widget.Toast;
 import android.util.Base64;
 
 import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -35,6 +40,8 @@ public class MainActivity extends Activity {
     private static final int PHOTO_PICK_REQUEST = 44;
     private static final int BACKUP_CREATE_REQUEST = 45;
     private static final int BACKUP_OPEN_REQUEST = 46;
+    private static final String APP_ASSET_PREFIX = "file:///android_asset/";
+    private static final String APP_START_URL = APP_ASSET_PREFIX + "index.html";
 
     private WebView webView;
     private boolean speechWaitingForPermission;
@@ -64,7 +71,10 @@ public class MainActivity extends Activity {
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
+        // Asset URLs require file access. Cross-file and cross-origin reads remain disabled below.
         settings.setAllowFileAccess(true);
+        settings.setAllowFileAccessFromFileURLs(false);
+        settings.setAllowUniversalAccessFromFileURLs(false);
         settings.setAllowContentAccess(false);
         settings.setMediaPlaybackRequiresUserGesture(true);
         settings.setUserAgentString(settings.getUserAgentString() + " ShengxiAndroid/1.0");
@@ -73,14 +83,77 @@ public class MainActivity extends Activity {
         webView.addJavascriptInterface(new MediaBridge(), "AndroidMedia");
         webView.setWebViewClient(new WebViewClient() {
             @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                return !isTrustedAssetUrl(request.getUrl().toString());
+            }
+
+            @Override
+            @SuppressWarnings("deprecation")
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                return !isTrustedAssetUrl(url);
+            }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                String url = request.getUrl().toString();
+                if (isTrustedAssetUrl(url) || isAllowedDataImage(url)) return super.shouldInterceptRequest(view, request);
+                return blockedResource();
+            }
+
+            @Override
+            @SuppressWarnings("deprecation")
+            public WebResourceResponse shouldInterceptRequest(WebView view, String url) {
+                if (isTrustedAssetUrl(url) || isAllowedDataImage(url)) return super.shouldInterceptRequest(view, url);
+                return blockedResource();
+            }
+
+            @Override
+            public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                if (!isTrustedAssetUrl(url)) {
+                    view.stopLoading();
+                    view.loadUrl(APP_START_URL);
+                    return;
+                }
+                super.onPageStarted(view, url, favicon);
+            }
+
+            @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                view.evaluateJavascript(SPEECH_POLYFILL, null);
+                if (isTrustedAssetUrl(url)) view.evaluateJavascript(SPEECH_POLYFILL, null);
             }
         });
 
-        if (savedInstanceState == null) webView.loadUrl("file:///android_asset/index.html");
-        else webView.restoreState(savedInstanceState);
+        if (savedInstanceState == null) {
+            webView.loadUrl(APP_START_URL);
+        } else {
+            WebBackForwardList restored = webView.restoreState(savedInstanceState);
+            WebHistoryItem current = restored == null ? null : restored.getCurrentItem();
+            if (current == null || !isTrustedAssetUrl(current.getUrl())) {
+                webView.clearHistory();
+                webView.loadUrl(APP_START_URL);
+            }
+        }
+    }
+
+    private static boolean isTrustedAssetUrl(String url) {
+        if (url == null || !url.startsWith(APP_ASSET_PREFIX)) return false;
+        Uri uri = Uri.parse(url);
+        String authority = uri.getAuthority();
+        String path = uri.getPath();
+        return "file".equalsIgnoreCase(uri.getScheme())
+            && (authority == null || authority.isEmpty())
+            && path != null
+            && path.startsWith("/android_asset/")
+            && !path.contains("..");
+    }
+
+    private static boolean isAllowedDataImage(String url) {
+        return url != null && (url.startsWith("data:image/jpeg;base64,") || url.startsWith("data:image/png;base64,"));
+    }
+
+    private static WebResourceResponse blockedResource() {
+        return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream(new byte[0]));
     }
 
     @Override

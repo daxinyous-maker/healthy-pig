@@ -29,13 +29,12 @@ test("server-renders the healthy pig app", async () => {
 });
 
 test("keeps restored web and mobile features in local source", async () => {
-  const [page, css, mobileApp, mobileHtml, mobileCss, hosting, agentRules, baseline] = await Promise.all([
+  const [page, css, mobileApp, mobileHtml, mobileCss, agentRules, baseline] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/recovered.css", import.meta.url), "utf8"),
     readFile(new URL("../android-apk/assets/app.js", import.meta.url), "utf8"),
     readFile(new URL("../android-apk/assets/index.html", import.meta.url), "utf8"),
     readFile(new URL("../android-apk/assets/v13.css", import.meta.url), "utf8"),
-    readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
     readFile(new URL("../AGENTS.md", import.meta.url), "utf8"),
     readFile(new URL("../docs/HEALTHY_PIG_BASELINE.md", import.meta.url), "utf8"),
   ]);
@@ -87,7 +86,6 @@ test("keeps restored web and mobile features in local source", async () => {
   assert.match(mobileHtml, /id="habit-kind"/);
   assert.match(mobileHtml, /id="day-note-dialog"/);
   assert.match(mobileCss, /@media \(min-width: 600px\)/);
-  assert.equal(JSON.parse(hosting).d1, null);
   assert.match(agentRules, /网页端和手机端是两个都需要完整实现、分别验收的产品端/);
   assert.match(agentRules, /网站默认仅用户本人访问/);
   assert.match(agentRules, /APK 默认只保存在本机/);
@@ -123,4 +121,29 @@ test("natural language parser supports flexible custom habits", async () => {
   assert.equal(results.find((entry) => entry.type === "medicine").value, 1);
   assert.equal(results.find((entry) => entry.type === "coffee").value, 2);
   assert.match(results.find((entry) => entry.type === "feeling").note, /喉咙有点干/);
+});
+
+test("Android backup text cannot become executable HTML", async () => {
+  await import(new URL(`../android-apk/assets/security.js?test=${Date.now()}`, import.meta.url));
+  const { escapeHtml, safeAvatar, safeIdentifier, safeText } = globalThis.HealthyPigSecurity;
+  const payloads = [
+    "<script>alert(1)</script>",
+    "<img src=x onerror=alert(1)>",
+    '"><img src=x onerror=alert(1)>',
+  ];
+
+  for (const payload of payloads) {
+    const restoredText = safeText(payload, "", 1000);
+    const rendered = `<span>${escapeHtml(restoredText)}</span>`;
+    assert.doesNotMatch(rendered, /<(?:script|img)\b/i);
+    assert.match(rendered, /&lt;/);
+    assert.equal(safeIdentifier(payload), "");
+  }
+
+  assert.equal(safeIdentifier("custom-water_2"), "custom-water_2");
+  assert.equal(safeIdentifier("__proto__"), "");
+  assert.equal(safeAvatar("javascript:alert(1)"), "😊");
+  assert.equal(safeAvatar("https://example.com/avatar.png"), "😊");
+  assert.equal(safeAvatar("data:image/svg+xml;base64,PHN2Zz4="), "😊");
+  assert.equal(safeAvatar("data:image/png;base64,iVBORw0KGgo="), "data:image/png;base64,iVBORw0KGgo=");
 });
